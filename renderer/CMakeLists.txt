@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 4.2)
-
 #Cmake 4.2 added support for cross-compiling with the Emscripten toolchain.
 #This allows programming in C++ and compiling to WASM with javascript bindings for browser execution directly through cmake.
 
@@ -9,12 +8,13 @@ project( detailed-map-UK
          VERSION 0.1.0
          LANGUAGES CXX C )
 
+
 set(CMAKE_CXX_COMPILER /usr/local/bin/em++)
 
 add_executable(App src/test.cpp)
 
 set_target_properties(App PROPERTIES
-                      SUFFIX ".html"
+                      RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/dist
                       CXX_STANDARD 17
                       CXX_STANDARD_REQUIRED ON
                       CXX_EXTENSIONS OFF
