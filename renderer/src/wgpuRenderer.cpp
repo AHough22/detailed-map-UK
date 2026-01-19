@@ -6,7 +6,6 @@
 #include <emscripten/emscripten.h>
 #include <GLFW/glfw3.h>
 #include <webgpu/webgpu_cpp.h>
-#include <webgpu/webgpu_glfw.h>
 #include "requestErrors.hpp"
 
 using namespace wgpu;
@@ -52,7 +51,13 @@ void ConfigureSurface(){
 
 void Init(){
 
-    instance = CreateInstance(nullptr);
+    InstanceFeatureName enabledFeature = InstanceFeatureName::TimedWaitAny;
+
+    InstanceDescriptor instanceDesc{};
+    instanceDesc.requiredFeatureCount = 1;
+    instanceDesc.requiredFeatures = &enabledFeature;
+
+    instance = CreateInstance(&instanceDesc);
 
     Future f1 = instance.RequestAdapter(nullptr, CallbackMode::WaitAnyOnly, RequestAdapterError);
     instance.WaitAny(f1, UINT64_MAX);

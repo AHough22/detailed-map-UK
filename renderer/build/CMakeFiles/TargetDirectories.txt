@@ -1,3 +1,0 @@
-/Users/andrew/Documents/GitHub/detailed-map-UK/renderer/build/CMakeFiles/App.dir
-/Users/andrew/Documents/GitHub/detailed-map-UK/renderer/build/CMakeFiles/edit_cache.dir
-/Users/andrew/Documents/GitHub/detailed-map-UK/renderer/build/CMakeFiles/rebuild_cache.dir

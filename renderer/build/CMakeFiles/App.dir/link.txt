@@ -1,1 +1,0 @@
-/usr/local/bin/em++ -sUSE_GLFW=3 --use-port=emdawnwebgpu -sASYNCIFY --embed-file /Users/andrew/Documents/GitHub/detailed-map-UK/renderer/src/shader.wgsl@shader.wgsl @CMakeFiles/App.dir/objects1.rsp -o /Users/andrew/Documents/GitHub/detailed-map-UK/renderer/dist/App.js
