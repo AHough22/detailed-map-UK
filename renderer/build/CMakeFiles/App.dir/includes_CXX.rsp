@@ -1,0 +1,1 @@
+-I/usr/local/cellar/emscripten/4.0.22/libexec/cache/ports/emdawnwebgpu/emdawnwebgpu_pkg/webgpu/include -I/usr/local/cellar/emscripten/4.0.22/libexec/cache/ports/emdawnwebgpu/emdawnwebgpu_pkg/webgpu_cpp/include
