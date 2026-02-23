@@ -9,7 +9,7 @@ project( detailed-map-UK
 set(CMAKE_CXX_COMPILER /usr/local/bin/em++)
 
 add_executable(App src/wgpuRenderer.cpp
-                   src/requestErrors.cpp)
+                   src/utilities.cpp)
 
 target_include_directories(App PRIVATE
                            /usr/local/cellar/emscripten/4.0.22/libexec/cache/ports/emdawnwebgpu/emdawnwebgpu_pkg/webgpu/include

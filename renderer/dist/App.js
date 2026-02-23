@@ -1017,6 +1017,75 @@ async function createWasm() {
   var ___assert_fail = (condition, filename, line, func) =>
       abort(`Assertion failed: ${UTF8ToString(condition)}, at: ` + [filename ? UTF8ToString(filename) : 'unknown filename', line, func ? UTF8ToString(func) : 'unknown function']);
 
+  class ExceptionInfo {
+      // excPtr - Thrown object pointer to wrap. Metadata pointer is calculated from it.
+      constructor(excPtr) {
+        this.excPtr = excPtr;
+        this.ptr = excPtr - 24;
+      }
+  
+      set_type(type) {
+        HEAPU32[(((this.ptr)+(4))>>2)] = type;
+      }
+  
+      get_type() {
+        return HEAPU32[(((this.ptr)+(4))>>2)];
+      }
+  
+      set_destructor(destructor) {
+        HEAPU32[(((this.ptr)+(8))>>2)] = destructor;
+      }
+  
+      get_destructor() {
+        return HEAPU32[(((this.ptr)+(8))>>2)];
+      }
+  
+      set_caught(caught) {
+        caught = caught ? 1 : 0;
+        HEAP8[(this.ptr)+(12)] = caught;
+      }
+  
+      get_caught() {
+        return HEAP8[(this.ptr)+(12)] != 0;
+      }
+  
+      set_rethrown(rethrown) {
+        rethrown = rethrown ? 1 : 0;
+        HEAP8[(this.ptr)+(13)] = rethrown;
+      }
+  
+      get_rethrown() {
+        return HEAP8[(this.ptr)+(13)] != 0;
+      }
+  
+      // Initialize native structure fields. Should be called once after allocated.
+      init(type, destructor) {
+        this.set_adjusted_ptr(0);
+        this.set_type(type);
+        this.set_destructor(destructor);
+      }
+  
+      set_adjusted_ptr(adjustedPtr) {
+        HEAPU32[(((this.ptr)+(16))>>2)] = adjustedPtr;
+      }
+  
+      get_adjusted_ptr() {
+        return HEAPU32[(((this.ptr)+(16))>>2)];
+      }
+    }
+  
+  var exceptionLast = 0;
+  
+  var uncaughtExceptionCount = 0;
+  var ___cxa_throw = (ptr, type, destructor) => {
+      var info = new ExceptionInfo(ptr);
+      // Initialize ExceptionInfo content after it was allocated in __cxa_allocate_exception.
+      info.init(type, destructor);
+      exceptionLast = ptr;
+      uncaughtExceptionCount++;
+      assert(false, 'Exception thrown, but exception catching is not enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or -sEXCEPTION_CATCHING_ALLOWED=[..] to catch.');
+    };
+
   var syscallGetVarargI = () => {
       assert(SYSCALLS.varargs != undefined);
       // the `+` prepended here is necessary to convince the JSCompiler that varargs is indeed a number.
@@ -5082,6 +5151,37 @@ async function createWasm() {
       delete WebGPU.Internals.jsObjects[ptr];
     };
 
+  var _emwgpuDeviceCreateBuffer = (devicePtr, descriptor, bufferPtr) => {
+      assert(descriptor);assert(HEAPU32[((descriptor)>>2)] === 0);
+  
+      var mappedAtCreation = !!(HEAPU32[(((descriptor)+(32))>>2)]);
+  
+      var desc = {
+        "label": WebGPU.makeStringFromOptionalStringView(
+          descriptor + 4),
+        "usage": HEAPU32[(((descriptor)+(16))>>2)],
+        "size": (HEAPU32[((((descriptor + 4))+(24))>>2)] * 0x100000000 + HEAPU32[(((descriptor)+(24))>>2)]),
+        "mappedAtCreation": mappedAtCreation,
+      };
+  
+      var device = WebGPU.getJsObject(devicePtr);
+      var buffer;
+      try {
+        buffer = device.createBuffer(desc);
+      } catch (ex) {
+        // The only exception should be RangeError if mapping at creation ran out of memory.
+        assert(ex instanceof RangeError);
+        assert(mappedAtCreation);
+        err('createBuffer threw:', ex);
+        return false;
+      }
+      WebGPU.Internals.jsObjectInsert(bufferPtr, buffer);
+      if (mappedAtCreation) {
+        WebGPU.Internals.bufferOnUnmaps[bufferPtr] = [];
+      }
+      return true;
+    };
+
   var _emwgpuDeviceCreateShaderModule = (devicePtr, descriptor, shaderModulePtr) => {
       assert(descriptor);
       var nextInChainPtr = HEAPU32[((descriptor)>>2)];
@@ -5376,6 +5476,17 @@ async function createWasm() {
   }
 
   
+  var _wgpuBufferGetSize = function(bufferPtr) {
+  
+  var ret = (() => { 
+      var buffer = WebGPU.getJsObject(bufferPtr);
+      // 64-bit
+      return buffer.size;
+     })();
+  return BigInt(ret);
+  };
+
+  
   var _wgpuCommandEncoderBeginRenderPass = (encoderPtr, descriptor) => {
       assert(descriptor);
   
@@ -5561,13 +5672,27 @@ async function createWasm() {
       queue.submit(cmds);
     };
 
-  var _wgpuRenderPassEncoderDraw = (passPtr, vertexCount, instanceCount, firstVertex, firstInstance) => {
-      assert(vertexCount >= 0);
+  
+  function _wgpuQueueWriteBuffer(queuePtr, bufferPtr, bufferOffset, data, size) {
+    bufferOffset = bigintToI53Checked(bufferOffset);
+  
+  
+      var queue = WebGPU.getJsObject(queuePtr);
+      var buffer = WebGPU.getJsObject(bufferPtr);
+      // There is a size limitation for ArrayBufferView. Work around by passing in a subarray
+      // instead of the whole heap. crbug.com/1201109
+      var subarray = HEAPU8.subarray(data, data + size);
+      queue.writeBuffer(buffer, bufferOffset, subarray, 0, size);
+    ;
+  }
+
+  var _wgpuRenderPassEncoderDrawIndexed = (passPtr, indexCount, instanceCount, firstIndex, baseVertex, firstInstance) => {
+      assert(indexCount >= 0);
       assert(instanceCount >= 0);
-      firstVertex >>>= 0;
+      firstIndex >>>= 0;
       firstInstance >>>= 0;
       var pass = WebGPU.getJsObject(passPtr);
-      pass.draw(vertexCount, instanceCount, firstVertex, firstInstance);
+      pass.drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
     };
 
   var _wgpuRenderPassEncoderEnd = (encoderPtr) => {
@@ -5575,11 +5700,38 @@ async function createWasm() {
       encoder.end();
     };
 
+  
+  function _wgpuRenderPassEncoderSetIndexBuffer(passPtr, bufferPtr, format, offset, size) {
+    offset = bigintToI53Checked(offset);
+    size = bigintToI53Checked(size);
+  
+  
+      var pass = WebGPU.getJsObject(passPtr);
+      var buffer = WebGPU.getJsObject(bufferPtr);
+      if (size == -1) size = undefined;
+      pass.setIndexBuffer(buffer, WebGPU.IndexFormat[format], offset, size);
+    ;
+  }
+
   var _wgpuRenderPassEncoderSetPipeline = (passPtr, pipelinePtr) => {
       var pass = WebGPU.getJsObject(passPtr);
       var pipeline = WebGPU.getJsObject(pipelinePtr);
       pass.setPipeline(pipeline);
     };
+
+  
+  function _wgpuRenderPassEncoderSetVertexBuffer(passPtr, slot, bufferPtr, offset, size) {
+    offset = bigintToI53Checked(offset);
+    size = bigintToI53Checked(size);
+  
+  
+      assert(slot >= 0);
+      var pass = WebGPU.getJsObject(passPtr);
+      var buffer = WebGPU.getJsObject(bufferPtr);
+      if (size == -1) size = undefined;
+      pass.setVertexBuffer(slot, buffer, offset, size);
+    ;
+  }
 
   var _wgpuSurfaceConfigure = (surfacePtr, config) => {
       assert(config);
@@ -6148,7 +6300,6 @@ if (Module['wasmBinary']) wasmBinary = Module['wasmBinary'];
   'makePromise',
   'idsToPromises',
   'makePromiseCallback',
-  'ExceptionInfo',
   'findMatchingCatch',
   'Browser_asyncPrepareDataCounter',
   'isLeapYear',
@@ -6286,6 +6437,7 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'uncaughtExceptionCount',
   'exceptionLast',
   'exceptionCaught',
+  'ExceptionInfo',
   'Browser',
   'requestFullscreen',
   'requestFullScreen',
@@ -6687,6 +6839,8 @@ var wasmImports = {
   /** @export */
   __assert_fail: ___assert_fail,
   /** @export */
+  __cxa_throw: ___cxa_throw,
+  /** @export */
   __syscall_fcntl64: ___syscall_fcntl64,
   /** @export */
   __syscall_ioctl: ___syscall_ioctl,
@@ -6708,6 +6862,8 @@ var wasmImports = {
   emwgpuAdapterRequestDevice: _emwgpuAdapterRequestDevice,
   /** @export */
   emwgpuDelete: _emwgpuDelete,
+  /** @export */
+  emwgpuDeviceCreateBuffer: _emwgpuDeviceCreateBuffer,
   /** @export */
   emwgpuDeviceCreateShaderModule: _emwgpuDeviceCreateShaderModule,
   /** @export */
@@ -6733,6 +6889,8 @@ var wasmImports = {
   /** @export */
   fd_write: _fd_write,
   /** @export */
+  wgpuBufferGetSize: _wgpuBufferGetSize,
+  /** @export */
   wgpuCommandEncoderBeginRenderPass: _wgpuCommandEncoderBeginRenderPass,
   /** @export */
   wgpuCommandEncoderFinish: _wgpuCommandEncoderFinish,
@@ -6745,11 +6903,17 @@ var wasmImports = {
   /** @export */
   wgpuQueueSubmit: _wgpuQueueSubmit,
   /** @export */
-  wgpuRenderPassEncoderDraw: _wgpuRenderPassEncoderDraw,
+  wgpuQueueWriteBuffer: _wgpuQueueWriteBuffer,
+  /** @export */
+  wgpuRenderPassEncoderDrawIndexed: _wgpuRenderPassEncoderDrawIndexed,
   /** @export */
   wgpuRenderPassEncoderEnd: _wgpuRenderPassEncoderEnd,
   /** @export */
+  wgpuRenderPassEncoderSetIndexBuffer: _wgpuRenderPassEncoderSetIndexBuffer,
+  /** @export */
   wgpuRenderPassEncoderSetPipeline: _wgpuRenderPassEncoderSetPipeline,
+  /** @export */
+  wgpuRenderPassEncoderSetVertexBuffer: _wgpuRenderPassEncoderSetVertexBuffer,
   /** @export */
   wgpuSurfaceConfigure: _wgpuSurfaceConfigure,
   /** @export */

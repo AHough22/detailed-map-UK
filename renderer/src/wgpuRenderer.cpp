@@ -1,12 +1,7 @@
 #include <cstdlib>
-#include <cstdio>
-#include <fstream>
-#include <sstream>
-#include <string>
 #include <emscripten/emscripten.h>
-#include <GLFW/glfw3.h>
 #include <webgpu/webgpu_cpp.h>
-#include "requestErrors.hpp"
+#include "utilities.hpp"
 
 using namespace wgpu;
 
@@ -17,43 +12,61 @@ Surface  surface;
 TextureFormat  format;
 RenderPipeline pipeline;
 
-std::string LoadShaderFile(const char* path){
-    std::ifstream file(path);
-    if(!file.is_open()){
-        printf("Failed to open shader file: %s\n", path);
-        exit(1);
-    }
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
-}
-
+Buffer indexBuffer;
+Buffer vertexBuffer;
+uint32_t vertexCount;
+uint32_t indexCount;
 
 const uint32_t kWidth  = 800;
 const uint32_t kHeight = 600;
 
-void ConfigureSurface(){
+bool InitializeBuffers(){
 
-    SurfaceCapabilities capabilities;
+    BufferDescriptor vertexDesc{};
+    BufferDescriptor indexDesc{};
+    std::vector<float> vertexData;
+    std::vector<uint16_t> indexData;
 
-    surface.GetCapabilities(adapter, &capabilities);
-    format = capabilities.formats[0];
+    vertexData = {
+        -0.45f, 0.5f,
+         0.45f, 0.5f,
+         0.0f, -0.5f,
 
-    SurfaceConfiguration config{
-        .device = device,
-        .format = format,
-        .width  = kWidth,
-        .height = kHeight
+         0.47f, 0.47f,
+         0.25f, 0.0f,
+         0.69f, 0.0f
     };
 
-    surface.Configure(&config);
+    indexData = {
+        0,1,2,
+        3,4,5
+    };
+
+    vertexCount = static_cast<uint32_t>(vertexData.size()/2);
+    indexCount  = static_cast<uint32_t>(indexData.size());
+
+
+    vertexDesc.size  = vertexData.size() * sizeof(float);
+    vertexDesc.usage = BufferUsage::CopyDst | BufferUsage::Vertex;
+    vertexBuffer = device.CreateBuffer(&vertexDesc);
+
+    device.GetQueue().WriteBuffer(vertexBuffer, 0, vertexData.data(), vertexDesc.size);
+
+    indexDesc.size  = indexData.size() * sizeof(uint16_t);
+    indexDesc.usage = BufferUsage::CopyDst | BufferUsage::Index;
+    indexBuffer = device.CreateBuffer(&indexDesc);
+
+    device.GetQueue().WriteBuffer(indexBuffer, 0, indexData.data(), indexDesc.size);
+    return true;
 }
 
-void Init(){
+bool Init(){
+
+    InstanceDescriptor instanceDesc{};
+    DeviceDescriptor   desc{};
 
     InstanceFeatureName enabledFeature = InstanceFeatureName::TimedWaitAny;
 
-    InstanceDescriptor instanceDesc{};
     instanceDesc.requiredFeatureCount = 1;
     instanceDesc.requiredFeatures = &enabledFeature;
 
@@ -61,35 +74,87 @@ void Init(){
 
     Future f1 = instance.RequestAdapter(nullptr, CallbackMode::WaitAnyOnly, RequestAdapterError);
     instance.WaitAny(f1, UINT64_MAX);
-
-    DeviceDescriptor desc{};
     desc.SetUncapturedErrorCallback(UncapturedError);
-
     Future f2 = adapter.RequestDevice(&desc, CallbackMode::WaitAnyOnly, RequestDeviceError);
     instance.WaitAny(f2, UINT64_MAX);
+
+    if(!InitializeBuffers()) return false;
+
+    return true;
 }
 
 
+Surface CreateWebSurface(Instance instance){
+
+    EmscriptenSurfaceSourceCanvasHTMLSelector canvasDesc{};
+    SurfaceDescriptor surfaceDesc{};
+
+    canvasDesc.selector = "#canvas";
+    surfaceDesc.nextInChain = &canvasDesc;
+
+    return instance.CreateSurface(&surfaceDesc);
+}
+
+
+void ConfigureSurface(){
+
+    SurfaceCapabilities  capabilities;
+    SurfaceConfiguration config;
+
+    // Get device capabilities and the
+    // corresponding list of available formats
+    surface.GetCapabilities(adapter, &capabilities);
+    format = capabilities.formats[0];
+
+    // Define Config Properties
+    config.device = device;
+    config.format = format;
+    config.width  = kWidth;
+    config.height = kHeight;
+
+    surface.Configure(&config);
+}
+
 void CreateRenderPipeline(){
 
-    std::string shaderCode = LoadShaderFile("shader.wgsl");
+    ShaderModuleDescriptor shaderDesc{};
+    ShaderSourceWGSL wgsl;
+    ShaderModule shader;
 
-    ShaderSourceWGSL wgsl{};
+    std::string shaderCode = LoadShaderFile("shader.wgsl");
     wgsl.code = shaderCode.c_str();
 
-    ShaderModuleDescriptor shaderDesc{};
     shaderDesc.nextInChain = &wgsl;
 
-    ShaderModule shader = device.CreateShaderModule(&shaderDesc);
+    shader = device.CreateShaderModule(&shaderDesc);
 
-    ColorTargetState colorTarget{ .format = format };
+    //======================================================//
 
-    FragmentState fragment{ .module      = shader,
-                            .targetCount = 1,
-                            .targets     = &colorTarget };
+    RenderPipelineDescriptor pipelineDesc{};
+    ColorTargetState colorTarget{};
+    FragmentState fragment{};
+    VertexBufferLayout vertexBufferLayout{};
+    VertexAttribute positionAttribute{};
 
-    RenderPipelineDescriptor pipelineDesc{ .vertex   = {.module = shader},
-                                           .fragment = &fragment };
+    colorTarget.format = format;
+
+    fragment.module = shader;
+    fragment.targetCount = 1;
+    fragment.targets = &colorTarget;
+
+    positionAttribute.shaderLocation = 0;
+    positionAttribute.format = VertexFormat::Float32x2;
+    positionAttribute.offset = 0;
+
+    vertexBufferLayout.attributeCount = 1;
+    vertexBufferLayout.attributes = &positionAttribute;
+    vertexBufferLayout.arrayStride = 2 * sizeof(float);
+    vertexBufferLayout.stepMode = VertexStepMode::Vertex;
+
+    pipelineDesc.vertex.module = shader;
+    pipelineDesc.vertex.bufferCount = 1;
+    pipelineDesc.vertex.buffers = &vertexBufferLayout;
+    pipelineDesc.fragment = &fragment;
 
     pipeline = device.CreateRenderPipeline(&pipelineDesc);
 }
@@ -97,39 +162,40 @@ void CreateRenderPipeline(){
 
 void Render(){
 
-    SurfaceTexture surfaceTexture;
+    // assigns swapchain image for the renderpass to use, and assigns the pipeline and VB to use.
 
-    surface.GetCurrentTexture(&surfaceTexture);
+    RenderPassDescriptor renderpass{};
+    RenderPassColorAttachment attachment{};
+    SurfaceTexture surfaceTexture{};
+    CommandEncoder encoder;
+    RenderPassEncoder pass;
+    CommandBuffer commands;
 
-    RenderPassColorAttachment attachment{
-        .view    = surfaceTexture.texture.CreateView(),
-        .loadOp  = LoadOp::Clear,
-        .storeOp = StoreOp::Store
-    };
+    surface.GetCurrentTexture(&surfaceTexture); //current swapchain image
 
-    RenderPassDescriptor renderpass{
-      .colorAttachmentCount = 1,
-      .colorAttachments = &attachment
-    };
+    attachment.view = surfaceTexture.texture.CreateView();
+    attachment.loadOp = LoadOp::Clear;
+    attachment.storeOp = StoreOp::Store;
 
-    CommandEncoder encoder = device.CreateCommandEncoder();
-    RenderPassEncoder pass = encoder.BeginRenderPass(&renderpass);
-    pass.SetPipeline(pipeline);
-    pass.Draw(3);
-    pass.End();
-    CommandBuffer commands = encoder.Finish();
+    renderpass.colorAttachmentCount = 1;
+    renderpass.colorAttachments = &attachment;
+
+    encoder = device.CreateCommandEncoder();
+
+        pass = encoder.BeginRenderPass(&renderpass);
+
+        pass.SetPipeline(pipeline);                                               //which pipeline to use
+        pass.SetVertexBuffer(0, vertexBuffer, 0, vertexBuffer.GetSize());               //which VB to use
+        pass.SetIndexBuffer(indexBuffer,IndexFormat::Uint16, 0, indexBuffer.GetSize()); //which IB to use
+        pass.DrawIndexed(indexCount, 1, 0, 0, 0);
+        pass.End();
+
+        commands = encoder.Finish();
+
     device.GetQueue().Submit(1, &commands);
 }
 
-Surface CreateWebSurface(Instance instance){
-    EmscriptenSurfaceSourceCanvasHTMLSelector canvasDesc{};
-    canvasDesc.selector = "#canvas";
 
-    SurfaceDescriptor surfaceDesc{};
-    surfaceDesc.nextInChain = &canvasDesc;
-
-    return instance.CreateSurface(&surfaceDesc);
-}
 
 int main(){
 

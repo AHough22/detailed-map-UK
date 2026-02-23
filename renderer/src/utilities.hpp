@@ -1,5 +1,6 @@
 #pragma once
 #include <webgpu/webgpu_cpp.h>
+#include <string>
 
 extern wgpu::Adapter adapter;
 void RequestAdapterError(wgpu::RequestAdapterStatus status,
@@ -15,3 +16,5 @@ void RequestDeviceError(wgpu::RequestDeviceStatus status,
 void UncapturedError(const wgpu::Device&,
                      wgpu::ErrorType type,
                      wgpu::StringView message);
+
+std::string LoadShaderFile(const char* path);
